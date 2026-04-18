@@ -1,6 +1,6 @@
 # Code-transmission
 
-´´´
+```
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -129,4 +129,4 @@ while True:
         result_surface = font.render(f"Predicted: {predicted_word}", True, (255, 255, 255))
         screen.blit(result_surface, (50, 150))
     pygame.display.flip()
-´´´
+```
