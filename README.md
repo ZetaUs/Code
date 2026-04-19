@@ -11,7 +11,7 @@ import sys
 import numpy as np
 
 # ---------------------- 1. 数据与模型部分 ----------------------
-# 构建文本数据（单词级，可替换为字符级）
+# 构建文本数据
 texts = [
     "hello world",
     "hello yellow",
@@ -29,7 +29,9 @@ word_to_idx = {word: idx for idx, word in enumerate(vocab)}
 idx_to_word = {idx: word for word, idx in word_to_idx.items()}
 vocab_size = len(vocab)
 
-# 文本数据集类（预测下一个词）
+seq_length = 2  # 用前2个词预测第3个
+
+# 文本数据集类
 class TextDataset(Dataset):
     def __init__(self, texts, word_to_idx, seq_length=2):
         self.texts = texts
@@ -38,6 +40,7 @@ class TextDataset(Dataset):
         self.data = []
         for text in texts:
             tokens = text.split()
+            # 生成 (前n个词, 下一个词)
             for i in range(len(tokens) - seq_length):
                 x = tokens[i:i+seq_length]
                 y = tokens[i+seq_length]
@@ -54,28 +57,27 @@ class TextDataset(Dataset):
 
 # LSTM 模型
 class LSTMModel(nn.Module):
-    def __init__(self, vocab_size, embedding_dim=10, hidden_dim=20, seq_length=2):
-        super(LSTMModel, self).__init__()
+    def __init__(self, vocab_size, embedding_dim=16, hidden_dim=32, seq_length=2):
+        super().__init__()
         self.embedding = nn.Embedding(vocab_size, embedding_dim)
         self.lstm = nn.LSTM(embedding_dim, hidden_dim, batch_first=True)
         self.fc = nn.Linear(hidden_dim, vocab_size)
-        self.seq_length = seq_length
     
     def forward(self, x):
         embedded = self.embedding(x)
         lstm_out, _ = self.lstm(embedded)
-        out = self.fc(lstm_out[:, -1, :])
+        out = self.fc(lstm_out[:, -1, :])  # 取最后一步输出
         return out
 
-# 初始化数据集、模型、损失函数、优化器
-dataset = TextDataset(texts, word_to_idx, seq_length=2)
+# 初始化
+dataset = TextDataset(texts, word_to_idx, seq_length)
 dataloader = DataLoader(dataset, batch_size=2, shuffle=True)
 model = LSTMModel(vocab_size)
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=0.01)
 
-# 训练模型
-epochs = 50
+# 训练
+epochs = 100
 for epoch in range(epochs):
     total_loss = 0
     for x, y in dataloader:
@@ -86,48 +88,72 @@ for epoch in range(epochs):
         optimizer.step()
         total_loss += loss.item()
     if (epoch + 1) % 10 == 0:
-        print(f"Epoch {epoch+1}, Loss: {total_loss/len(dataloader):.4f}")
+        avg_loss = total_loss / len(dataloader)
+        print(f"Epoch {epoch+1:3d} | Loss: {avg_loss:.4f}")
 
-# 预测下一个词的函数
-def predict_next_word(input_sequence, model, word_to_idx, idx_to_word):
-    input_tokens = input_sequence.split()
-    input_idx = torch.tensor([word_to_idx[tok] for tok in input_tokens], dtype=torch.long).unsqueeze(0)
-    with torch.no_grad():
-        output = model(input_idx)
-        predicted_idx = torch.argmax(output, dim=1).item()
-    return idx_to_word[predicted_idx]
+# 预测函数（自动处理长度）
+def predict_next_word(input_sequence, model, word_to_idx, idx_to_word, seq_len=2):
+    tokens = input_sequence.strip().split()
+    # 只取最后 seq_len 个词
+    tokens = tokens[-seq_len:]
+    # 如果不够，直接返回空
+    if len(tokens) != seq_len:
+        return "need more words"
+    
+    try:
+        x = torch.tensor([[word_to_idx[w] for w in tokens]], dtype=torch.long)
+        with torch.no_grad():
+            out = model(x)
+            idx = torch.argmax(out).item()
+        return idx_to_word[idx]
+    except KeyError as e:
+        return f"unknown word: {str(e)}"
 
-# ---------------------- 2. Pygame 可视化部分（整合动画交互） ----------------------
+# ---------------------- 2. Pygame 可视化交互 ----------------------
 pygame.init()
-screen_width, screen_height = 800, 600
-screen = pygame.display.set_mode((screen_width, screen_height))
-pygame.display.set_caption("Animation vs. Coding")
-font = pygame.font.SysFont("Consolas", 24)
+W, H = 800, 600
+screen = pygame.display.set_mode((W, H))
+pygame.display.set_caption("Animation vs Code - LSTM Text Predictor")
+font = pygame.font.SysFont("Consolas", 26)
+clock = pygame.time.Clock()
+
 input_text = ""
 predicted_word = ""
 
 while True:
+    screen.fill((0, 0, 0))
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
             sys.exit()
+        
         elif event.type == pygame.KEYDOWN:
             if event.key == pygame.K_RETURN:
-                # 按下回车时，模型预测下一个词
-                if input_text.strip():
-                    predicted_word = predict_next_word(input_text, model, word_to_idx, idx_to_word)
+                # 回车预测
+                predicted_word = predict_next_word(input_text, model, word_to_idx, idx_to_word, seq_length)
             elif event.key == pygame.K_BACKSPACE:
                 input_text = input_text[:-1]
+            elif event.key == pygame.K_ESCAPE:
+                input_text = ""
+                predicted_word = ""
             else:
-                input_text += event.unicode
+                # 只允许可见字符
+                if event.unicode.isprintable():
+                    input_text += event.unicode
 
-    screen.fill((0, 0, 0))
-    # 绘制输入提示和文本
-    input_surface = font.render(f"Input: {input_text}", True, (255, 255, 255))
-    screen.blit(input_surface, (50, 100))
-    # 绘制模型预测结果
+    # 绘制
+    surf_input = font.render(f"Input: {input_text}", True, (220, 220, 220))
+    screen.blit(surf_input, (50, 100))
+
     if predicted_word:
-        result_surface = font.render(f"Predicted: {predicted_word}", True, (255, 255, 255))
-        screen.blit(result_surface, (50, 150))
+        color = (0, 255, 100) if "unknown" not in predicted_word and "need" not in predicted_word else (255, 80, 80)
+        surf_pred = font.render(f"Predicted: {predicted_word}", True, color)
+        screen.blit(surf_pred, (50, 160))
+
     pygame.display.flip()
+    clock.tick(60)
+```
+### 依赖
+```
+pip install torch pygame numpy
 ```
