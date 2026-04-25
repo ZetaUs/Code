@@ -1,6 +1,6 @@
 # Code
 
-## Windows box
+## Windows box.py
 ```
 import os
 import subprocess
